@@ -200,8 +200,31 @@ namespace Scraping_Egy_Bus.Scraping
                 var tripCode = codeMatch.Success ? codeMatch.Groups[1].Value : null;
                 if (!codeMatch.Success) continue;
 
-                var timeMatch = Regex.Match(trip.InnerText, @"الساعة\s*(\d{1,2}:\d{2}\s*(?:صباحًا|صباحاً|مساءً))");
-                var departureTime = timeMatch.Success ? timeMatch.Groups[1].Value : null;
+                //Time
+                var timeMatch = Regex.Match(trip.InnerText, @"الساعة\s*(\d{1,2}:\d{2})\s*(صباحًا|صباحاً|مساءً)");
+                TimeSpan? departureTime = null;
+
+                if (timeMatch.Success)
+                {
+                    var timePart = timeMatch.Groups[1].Value;   // 05:15
+                    var period = timeMatch.Groups[2].Value;     // صباحاً / مساءً
+
+                    var parts = timePart.Split(':');
+                    int hour = int.Parse(parts[0]);
+                    int minute = int.Parse(parts[1]);
+
+                    
+                    if (period.Contains("مساء") && hour < 12)
+                        hour += 12;
+
+                    
+                    if (period.Contains("صباح") && hour == 12)
+                        hour = 0;
+
+                    departureTime = new TimeSpan(hour, minute, 0);
+                }
+
+
 
                 var bookingNode = trip.SelectSingleNode(".//a[contains(@class,'geodir-js-booking')]");
                 string bookingUrl = null;
@@ -238,11 +261,11 @@ namespace Scraping_Egy_Bus.Scraping
                         ToCity = toCityId,
                         FromCityName = fromCityName,
                         ToCityName = toCityName,
-                        TripDate = date.ToString("yyyy-MM-dd"),
+                        TripDate = date,
                         CompanyName = "EG-BUS",
                         TripCode = tripCode,
                         Price = price,
-                        DepartureTime = departureTime,
+                        DepartureTime =departureTime,
                         BookingUrl = bookingUrl,
                         Features = featuresText
                     };

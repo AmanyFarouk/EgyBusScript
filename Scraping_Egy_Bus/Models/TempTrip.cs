@@ -9,8 +9,8 @@
         public string FromCityName { get; set; }
         public string ToCityName { get; set; }
         public decimal Price { get; set; }
-        public string DepartureTime { get; set; }
-        public string TripDate { get; set; }
+        public TimeSpan ? DepartureTime { get; set; }
+        public DateTime TripDate { get; set; }
         public string CompanyName { get; set; }
         public string BookingUrl { get; set; }
         public string Features { get; set; }
