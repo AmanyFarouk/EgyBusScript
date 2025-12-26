@@ -8,7 +8,7 @@ using Scraping_Egy_Bus.Scraping;
 
 namespace Scraping_Egy_Bus.Controllers
 {
-    [Route("api/[controller]")]
+    [Route("[controller]/[action]")]
     [ApiController]
     public class ScrapingController : ControllerBase
     {
@@ -23,7 +23,7 @@ namespace Scraping_Egy_Bus.Controllers
         {
             //scraping trips monthly job
             var runAndSaveScript = new SaveScrapingDataToTempTables(_context);
-            RecurringJob.AddOrUpdate(() => runAndSaveScript.Save(), Cron.Minutely);
+            RecurringJob.AddOrUpdate(() => runAndSaveScript.Save(), Cron.Monthly);
 
 
             //delete old trips job
@@ -41,6 +41,12 @@ namespace Scraping_Egy_Bus.Controllers
             }
             _context.TempTrips.RemoveRange(oldTrips);
             await _context.SaveChangesAsync();
+        }
+        [HttpGet]
+        public IActionResult getAllTrips()
+        {
+            var trips = _context.Trips.Select(t=>t.Features).ToList();
+            return Ok(trips);
         }
     }
 }

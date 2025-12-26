@@ -82,88 +82,52 @@ namespace Scraping_Egy_Bus.Scraping
             HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
         }
 
-        public async Task<List<TempTrip>> ScrapeDaysAsync(DateTime startDate, int numberOfDays, CancellationToken cancellationToken = default)
+        
+        public async Task<List<TempTrip>> ScrapeAllTripsAsync(int numberOfDays, CancellationToken cancellationToken = default)
         {
-            var allTrips = new List<TempTrip>();
-
-            for (int i = 0; i < numberOfDays; i++)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    Console.WriteLine("Scraping for multiple days was cancelled.");
-                    break;
-                }
-                var currentDate = startDate.AddDays(i);
-                Console.WriteLine($"\n<<<<<<<<<< Scraping day {i + 1}/{numberOfDays} for date: {currentDate:yyyy-MM-dd} >>>>>>>>>>\n");
-
-                var dailyTrips = await ScrapeAllTripsForDateAsync(currentDate, 25, cancellationToken);
-                allTrips.AddRange(dailyTrips);
-            }
-
-            return allTrips.OrderBy(t => t.TripDate).ThenBy(t => t.FromCityName).ThenBy(t => t.ToCityName).ToList();
-        }
-
-        private async Task<List<TempTrip>> ScrapeAllTripsForDateAsync(DateTime date, int maxDegreeOfParallelism = 25, CancellationToken cancellationToken = default)
-        {
-            Console.WriteLine($"Starting scraping for date: {date:yyyy-MM-dd} with {maxDegreeOfParallelism} parallel tasks.");
             var allTrips = new ConcurrentBag<TempTrip>();
-            var cityIds = CityNames.Keys.ToList();
-
-            var cityPairs = new List<(int from, int to)>();
-            foreach (var fromId in cityIds)
-            {
-                foreach (var toId in cityIds)
-                {
-                    if (fromId != toId)
-                    {
-                        cityPairs.Add((fromId, toId));
-                    }
-                }
-            }
+            var cityPairs = CityNames.Keys
+                .SelectMany(fromId => CityNames.Keys.Where(toId => fromId != toId)
+                .Select(toId => (from: fromId, to: toId)))
+                .ToList();
 
             var options = new ParallelOptions
             {
-                MaxDegreeOfParallelism = maxDegreeOfParallelism,
+                MaxDegreeOfParallelism = 25,
                 CancellationToken = cancellationToken
             };
 
-            await Parallel.ForEachAsync(cityPairs, options, async (pair, token) =>
+            for (int i = 0; i < numberOfDays; i++)
             {
-                try
+                if (cancellationToken.IsCancellationRequested) break;
+
+                var currentDate = DateTime.Today.AddDays(i);
+
+                await Parallel.ForEachAsync(cityPairs, options, async (pair, token) =>
                 {
-                    var fromCityName = CityNames.GetValueOrDefault(pair.from, $"ID {pair.from}");
-                    var toCityName = CityNames.GetValueOrDefault(pair.to, $"ID {pair.to}");
-
-                    Console.WriteLine($"-> Scraping: {fromCityName} to {toCityName}");
-
-                    var foundTrips = await ScrapeRouteAsync(pair.from, pair.to, date);
-
-                    if (foundTrips.Any())
+                    try
                     {
-                        foreach (var trip in foundTrips)
+                        var foundTrips = await ScrapeRouteAsync(pair.from, pair.to, currentDate);
+                        if (foundTrips.Any())
                         {
-                            allTrips.Add(trip);
+                            foreach (var trip in foundTrips)
+                            {
+                                allTrips.Add(trip);
+                            }
                         }
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine($"   [SUCCESS] Found {foundTrips.Count} trips for {fromCityName} -> {toCityName}.");
-                        Console.ResetColor();
                     }
-                }
-                catch (OperationCanceledException)
-                {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine("   [CANCELLED] Operation was cancelled.");
-                    Console.ResetColor();
-                }
-                catch (Exception ex)
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"   [ERROR] Failed to scrape route. Reason: {ex.Message}");
-                    Console.ResetColor();
-                }
-            });
+                    catch (OperationCanceledException)
+                    {
+                       
+                    }
+                    catch (Exception)
+                    {
+                        
+                    }
+                });
+            }
 
-            return allTrips.OrderBy(t => t.FromCityName).ThenBy(t => t.ToCityName).ToList();
+            return allTrips.OrderBy(t => t.TripDate).ThenBy(t => t.FromCityName).ThenBy(t => t.ToCityName).ToList();
         }
 
         public async Task<List<TempTrip>> ScrapeRouteAsync(int fromCityId, int toCityId, DateTime date)
@@ -178,7 +142,7 @@ namespace Scraping_Egy_Bus.Scraping
             }
             catch (HttpRequestException)
             {
-                return new List<TempTrip>();
+                return new List<TempTrip>(); 
             }
 
             var doc = new HtmlDocument();
@@ -191,40 +155,25 @@ namespace Scraping_Egy_Bus.Scraping
 
             foreach (var trip in tripNodes)
             {
-                var priceNode = trip.SelectSingleNode(".//span[contains(text(),'جنيه')]");
-                if (priceNode == null) continue;
-
-                if (!decimal.TryParse(priceNode.InnerText.Replace("جنيه", "").Trim(), out var price)) continue;
+                if (!decimal.TryParse(trip.SelectSingleNode(".//span[contains(text(),'جنيه')]")?.InnerText.Replace("جنيه", "").Trim(), out var price)) continue;
 
                 var codeMatch = Regex.Match(trip.InnerText, @"كود الرحلة\s*(\d+)");
-                var tripCode = codeMatch.Success ? codeMatch.Groups[1].Value : null;
                 if (!codeMatch.Success) continue;
+                var tripCode = codeMatch.Groups[1].Value;
 
-                //Time
                 var timeMatch = Regex.Match(trip.InnerText, @"الساعة\s*(\d{1,2}:\d{2})\s*(صباحًا|صباحاً|مساءً)");
                 TimeSpan? departureTime = null;
-
                 if (timeMatch.Success)
                 {
-                    var timePart = timeMatch.Groups[1].Value;   // 05:15
-                    var period = timeMatch.Groups[2].Value;     // صباحاً / مساءً
-
+                    var timePart = timeMatch.Groups[1].Value;
+                    var period = timeMatch.Groups[2].Value;
                     var parts = timePart.Split(':');
                     int hour = int.Parse(parts[0]);
                     int minute = int.Parse(parts[1]);
-
-                    
-                    if (period.Contains("مساء") && hour < 12)
-                        hour += 12;
-
-                    
-                    if (period.Contains("صباح") && hour == 12)
-                        hour = 0;
-
+                    if (period.Contains("مساء") && hour < 12) hour += 12;
+                    if (period.Contains("صباح") && hour == 12) hour = 0;
                     departureTime = new TimeSpan(hour, minute, 0);
                 }
-
-
 
                 var bookingNode = trip.SelectSingleNode(".//a[contains(@class,'geodir-js-booking')]");
                 string bookingUrl = null;
@@ -246,10 +195,8 @@ namespace Scraping_Egy_Bus.Scraping
                 }
                 var featuresText = features.Any() ? string.Join(", ", features) : null;
 
-                CityNames.TryGetValue(fromCityId, out var fromCityName);
-                CityNames.TryGetValue(toCityId, out var toCityName);
-                fromCityName ??= $"ID {fromCityId}";
-                toCityName ??= $"ID {toCityId}";
+                var fromCityName = CityNames.GetValueOrDefault(fromCityId, $"ID {fromCityId}");
+                var toCityName = CityNames.GetValueOrDefault(toCityId, $"ID {toCityId}");
 
                 var uniqueTripKey = $"{tripCode}-{departureTime}";
 
@@ -265,15 +212,13 @@ namespace Scraping_Egy_Bus.Scraping
                         CompanyName = "EG-BUS",
                         TripCode = tripCode,
                         Price = price,
-                        DepartureTime =departureTime,
+                        DepartureTime = departureTime,
                         BookingUrl = bookingUrl,
                         Features = featuresText
                     };
                 }
             }
-
             return tripsMap.Values.ToList();
         }
     }
-
 }
